@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart ROAS — V1 Algorithm</title>
+<style>
+  :root {
+    --bg: #faf9f5;
+    --card: #ffffff;
+    --ink: #1f1e1c;
+    --muted: #6b6a64;
+    --line: #e3e1d8;
+    --red-bg: #fcebeb;     --red-bd: #e24b4a;  --red-tx: #791f1f;
+    --teal-bg: #e1f5ee;    --teal-bd: #1d9e75; --teal-tx: #085041;
+    --gray-bg: #f1efe8;    --gray-bd: #888780; --gray-tx: #444441;
+    --amber-bg: #faeeda;   --amber-bd: #ba7517;--amber-tx: #633806;
+    --blue-bg: #e6f1fb;    --blue-bd: #378add; --blue-tx: #0c447c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+    padding: 40px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 600; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+  h2 {
+    font-size: 18px; font-weight: 600; margin: 40px 0 14px;
+    padding-bottom: 8px; border-bottom: 2px solid var(--line);
+  }
+  h3 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; }
+  p { font-size: 14px; color: var(--muted); margin-bottom: 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px; margin-bottom: 18px;
+  }
+
+  /* ---- Matrix ---- */
+  .matrix { border-collapse: separate; border-spacing: 8px; width: 100%; }
+  .matrix th {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    padding: 6px; text-align: center;
+  }
+  .matrix td.rowlabel {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    text-align: center; width: 70px;
+  }
+  .cell {
+    border-radius: 10px; padding: 16px 12px; text-align: center;
+    border: 1px solid;
+  }
+  .cell .intent { font-size: 15px; font-weight: 700; letter-spacing: .04em; }
+  .cell .desc { font-size: 11.5px; margin-top: 4px; }
+  .c-red   { background: var(--red-bg);  border-color: var(--red-bd);  color: var(--red-tx); }
+  .c-teal  { background: var(--teal-bg); border-color: var(--teal-bd); color: var(--teal-tx); }
+  .c-gray  { background: var(--gray-bg); border-color: var(--gray-bd); color: var(--gray-tx); }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 12.5px; color: var(--muted); }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid; }
+
+  /* ---- Flow steps ---- */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    border-left: 3px solid var(--line); padding: 4px 0 20px 20px;
+    position: relative;
+  }
+  .step:last-child { padding-bottom: 0; }
+  .step::before {
+    content: ""; position: absolute; left: -8px; top: 6px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--card); border: 3px solid var(--muted);
+  }
+  .step.red::before    { border-color: var(--red-bd); }
+  .step.teal::before   { border-color: var(--teal-bd); }
+  .step.amber::before  { border-color: var(--amber-bd); }
+  .step.blue::before   { border-color: var(--blue-bd); }
+  .step .label { font-size: 14px; font-weight: 600; }
+  .step .body  { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+  /* ---- Tier boxes ---- */
+  .tiers { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 8px; }
+  .tier { border-radius: 10px; padding: 14px; border: 1px solid; font-size: 13px; }
+  .tier .ttitle { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+  .tier .tsub { font-size: 11.5px; opacity: .8; margin-bottom: 8px; }
+  .tier ul { margin-left: 16px; }
+  .tier li { font-size: 12.5px; margin-bottom: 3px; }
+  .t-blue  { background: var(--blue-bg);  border-color: var(--blue-bd);  color: var(--blue-tx); }
+  .t-amber { background: var(--amber-bg); border-color: var(--amber-bd); color: var(--amber-tx); }
+  .t-gray  { background: var(--gray-bg);  border-color: var(--gray-bd);  color: var(--gray-tx); }
+
+  /* ---- Param table ---- */
+  table.params { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.params th, table.params td {
+    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line);
+  }
+  table.params th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  table.params code {
+    background: var(--gray-bg); padding: 1px 6px; border-radius: 4px;
+    font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 9px; border-radius: 20px; border: 1px solid;
+  }
+  .pill.red  { background: var(--red-bg);  border-color: var(--red-bd);  color: var(--red-tx); }
+  .pill.teal { background: var(--teal-bg); border-color: var(--teal-bd); color: var(--teal-tx); }
+  .note {
+    font-size: 12.5px; color: var(--muted); font-style: italic;
+    border-left: 3px solid var(--amber-bd); padding-left: 12px; margin-top: 12px;
+  }
+  .formula {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px; background: var(--gray-bg);
+    padding: 8px 12px; border-radius: 6px; margin: 8px 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Smart ROAS — V1 Campaign Optimisation Algorithm</h1>
+  <div class="sub">Target-ROAS auto-managed campaigns · 1 offer_code = 1 campaign · 3-day evaluation loop</div>
+
+  <!-- ============ STEP 1: MATRIX ============ -->
+  <h2>Step 1 — Campaign decision matrix (BU% × ROAS%)</h2>
+  <p>Every 3 days, each campaign is assessed on two signals computed over the trailing 3-day window:
+     <strong>ROAS%</strong> = actual ROAS ÷ target ROAS, and <strong>BU%</strong> = spend ÷ daily budget.
+     The cell determines one intent: TIGHTEN, EXPAND, or HOLD.</p>
+
+  <div class="card">
+    <table class="matrix">
+      <tr>
+        <th></th>
+        <th>ROAS% &lt; 80%</th>
+        <th>ROAS% 80–120%</th>
+        <th>ROAS% &gt; 120%</th>
+      </tr>
+      <tr>
+        <td class="rowlabel">BU%<br>&lt; 80%</td>
+        <td><div class="cell c-red"><div class="intent">TIGHTEN</div><div class="desc">underperforming · budget headroom</div></div></td>
+        <td><div class="cell c-teal"><div class="intent">EXPAND</div><div class="desc">on target · budget headroom</div></div></td>
+        <td><div class="cell c-teal"><div class="intent">EXPAND</div><div class="desc">over-delivering · budget headroom</div></div></td>
+      </tr>
+      <tr>
+        <td class="rowlabel">BU%<br>&gt; 80%</td>
+        <td><div class="cell c-red"><div class="intent">TIGHTEN</div><div class="desc">underperforming · budget fully spent</div></div></td>
+        <td><div class="cell c-gray"><div class="intent">HOLD</div><div class="desc">on target · not touch</div></div></td>
+        <td><div class="cell c-gray"><div class="intent">HOLD</div><div class="desc">over-delivering · not touch</div></div></td>
+      </tr>
+    </table>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--red-bg);border-color:var(--red-bd)"></span>TIGHTEN — cut bids</span>
+      <span><span class="dot" style="background:var(--teal-bg);border-color:var(--teal-bd)"></span>EXPAND — add keywords</span>
+      <span><span class="dot" style="background:var(--gray-bg);border-color:var(--gray-bd)"></span>HOLD — no action</span>
+    </div>
+  </div>
+
+  <!-- ============ CIRCUIT BREAKER ============ -->
+  <h2>Step 0 — Daily circuit breaker</h2>
+  <p>Runs every day, independent of the 3-day loop. A safety guardrail, not an optimiser — fires only in the clear-disaster case.</p>
+  <div class="card">
+    <div class="flow">
+      <div class="step red">
+        <div class="label">Trigger: BU% &gt; 80% AND ROAS% &lt; 80%</div>
+        <div class="body">Campaign is spending its full budget at bad efficiency — real money lost, can't wait for the 3-day cycle. BU &gt; 80% also self-gates against noise (can't spend a full budget on a handful of clicks).</div>
+      </div>
+      <div class="step red">
+        <div class="label">Action: one-time aggressive cut on all keyword bids</div>
+        <div class="body">A single large cut across the campaign. Not repeated daily — fires once when the condition is met, then the 3-day loop takes over.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TIGHTEN ============ -->
+  <h2>Deep dive — TIGHTEN</h2>
+  <p>Campaign ROAS% &lt; 80%. The campaign pays too much per conversion. Cuts are <strong>surgical, not flat</strong> —
+     keywords are split into three tiers by data sufficiency and acted on at the smallest unit with a trustworthy signal.</p>
+
+  <div class="card">
+    <div class="tiers">
+      <div class="tier t-blue">
+        <div class="ttitle">Tier 1 — High-data keywords</div>
+        <div class="tsub">clicks ≥ MIN_CLICKS — judge individually</div>
+        <ul>
+          <li>Keyword ROAS &lt; target → cut bid, proportional to the miss</li>
+          <li>Keyword ROAS ≥ target → hold (don't punish a good keyword for the campaign)</li>
+          <li>Mostly Established + Mid-volume keywords</li>
+        </ul>
+      </div>
+      <div class="tier t-amber">
+        <div class="ttitle">Tier 2 — Long-tail block</div>
+        <div class="tsub">clicks &lt; MIN_CLICKS — judge collectively</div>
+        <ul>
+          <li>Pool all low-data keywords into one block</li>
+          <li>Compute the block's collective ROAS</li>
+          <li>Block ROAS &lt; target → one uniform modest cut across the block</li>
+          <li>Never judge a single long-tail keyword</li>
+        </ul>
+      </div>
+      <div class="tier t-gray">
+        <div class="ttitle">Tier 3 — Zero-data keywords</div>
+        <div class="tsub">no signal at all</div>
+        <ul>
+          <li>Untouched</li>
+          <li>No basis to act — leave the bid as is</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Proportional cut (Tier 1) — ratio-based, with per-cycle cap</h3>
+    <p style="margin-bottom:6px">ROAS and bid are inversely related (ROAS ∝ 1/bid). To move a keyword's ROAS to target, the bid scales by the ratio of current ROAS to target ROAS.</p>
+    <div class="formula">raw_cut    = 1 − (keyword_ROAS / target_ROAS)&nbsp;&nbsp;&nbsp;// implied cut to hit target
+cut_factor = min(raw_cut, MAX_CUT_PER_CYCLE)&nbsp;&nbsp;&nbsp;// cap one cycle's cut
+new_bid    = current_bid × (1 − cut_factor)</div>
+    <h3>Clamp (all tiers)</h3>
+    <div class="formula">new_bid = max(new_bid, bid_floor)&nbsp;&nbsp;&nbsp;// floor-only — V1 only ever cuts</div>
+    <div class="note">The cut is derived from the actual bid↔ROAS relationship, not a tuned coefficient — a keyword at 37.5% of target ROAS implies its bid should drop to 37.5% of current. The cap (MAX_CUT_PER_CYCLE) bounds how far a bid can fall in one 3-day cycle, so a very bad keyword converges over a few cycles instead of one violent swing. The circuit breaker is exempt from the cap. V1 has no bid-recovery step — bids only ratchet down, so the clamp only needs a floor (a cut can never raise a bid above its current value).</div>
+  </div>
+
+  <!-- ============ EXPAND ============ -->
+  <h2>Deep dive — EXPAND</h2>
+  <p>Campaign ROAS% ≥ 80% AND BU% &lt; 80%. The campaign is healthy but not spending its full budget.
+     Low budget use is a <strong>coverage</strong> problem, not a bid problem — EXPAND adds keywords and does not touch bids.</p>
+
+  <div class="card">
+    <div class="flow">
+      <div class="step teal">
+        <div class="label">Source candidates</div>
+        <div class="body">Pull organic keywords for this offer_code from <code>product_performance_aggregated</code> — organic only (keywords not established on ads).</div>
+      </div>
+      <div class="step teal">
+        <div class="label">Filter</div>
+        <div class="body">Keep a candidate only if: organic views ≥ MIN_ORG_VIEWS (kills noise — proven demand), organic CVR ≥ MIN_CVR (quality gate), and the keyword is not already in the campaign (genuine add).</div>
+      </div>
+      <div class="step teal">
+        <div class="label">Rank</div>
+        <div class="body">Sort survivors by organic orders, descending. Orders — not raw CVR — so tiny high-variance keywords don't float to the top.</div>
+      </div>
+      <div class="step teal">
+        <div class="label">Add top N</div>
+        <div class="body">Add the top N keywords to the campaign at a starting bid equal to the campaign's current average keyword bid.</div>
+      </div>
+    </div>
+    <div class="note">CVR is a filter, not the sort key. Ranking by CVR alone surfaces low-volume keywords with extreme ratios. Ranking by organic orders favours keywords that are both high-demand and converting.</div>
+  </div>
+
+  <!-- ============ HOLD ============ -->
+  <h2>HOLD</h2>
+  <div class="card">
+    <p style="margin:0">Campaign ROAS% ≥ 80% AND BU% &gt; 80% — on or above target, spending the full budget.
+       No action. The campaign config is held for the next 3-day cycle.</p>
+  </div>
+
+  <!-- ============ PARAMETERS ============ -->
+  <h2>Open parameters</h2>
+  <p>Structure is fixed; these values need to be set before engineering.</p>
+  <div class="card">
+    <table class="params">
+      <tr><th>Parameter</th><th>Controls</th><th>Used by</th><th>Suggested start</th></tr>
+      <tr><td><code>MIN_CLICKS</code></td><td>Tier 1 vs long-tail split per keyword</td><td><span class="pill red">TIGHTEN</span></td><td>20–30 clicks</td></tr>
+      <tr><td><code>MAX_CUT_PER_CYCLE</code></td><td>Cap on a single cycle's bid decrease</td><td><span class="pill red">TIGHTEN</span></td><td>30%</td></tr>
+      <tr><td>Block cut size</td><td>Uniform long-tail block cut</td><td><span class="pill red">TIGHTEN</span></td><td>flat 10–15%</td></tr>
+      <tr><td><code>bid_floor</code> / <code>bid_ceiling</code></td><td>Bid bounds</td><td><span class="pill red">TIGHTEN</span></td><td>from existing bid logic</td></tr>
+      <tr><td>Circuit breaker cut</td><td>Day-1 emergency cut size</td><td>Step 0</td><td>≈ 30–40%</td></tr>
+      <tr><td><code>MIN_ORG_VIEWS</code></td><td>Volume floor — noise filter</td><td><span class="pill teal">EXPAND</span></td><td>≈ 250</td></tr>
+      <tr><td><code>MIN_CVR</code></td><td>Quality floor for candidates</td><td><span class="pill teal">EXPAND</span></td><td>campaign CVR, or ≈ 3%</td></tr>
+      <tr><td><code>N</code></td><td>Keywords added per EXPAND cycle</td><td><span class="pill teal">EXPAND</span></td><td>3–5</td></tr>
+      <tr><td>starting bid</td><td>Bid for newly added keywords</td><td><span class="pill teal">EXPAND</span></td><td>campaign avg keyword bid</td></tr>
+    </table>
+  </div>
+
+  <!-- ============ NOTES ============ -->
+  <h2>V1 scope notes</h2>
+  <div class="card">
+    <p style="margin-bottom:8px">· First optimisation runs ~Day 4 (needs a 3-day window). Days 2–3 are pure learning; only the circuit breaker is active.</p>
+    <p style="margin-bottom:8px">· No keyword removal in V1 — bad keywords are handled by aggressive bid cuts, not by negative targets.</p>
+    <p style="margin-bottom:8px">· No exploration/performance budget split in V1 — the entire daily budget is performance budget.</p>
+    <p style="margin-bottom:8px">· No bid recovery — bids only ratchet down. Campaigns will need periodic resets, or recovery added in V2.</p>
+    <p style="margin:0">· All joins on offer_code × country. Target ROAS and daily budget come from the campaign_settings table.</p>
+  </div>
+
+
+  <h2>SQL — unified output query</h2>
+  <p>The full algorithm as one BigQuery query. Output: one row per offer_code × country × keyword, with the bid to apply and the action tag. Dummy data is baked in so it runs standalone; the real <code>product_ads_events</code> and <code>product_performance_aggregated</code> queries are included commented out — swap by uncommenting.</p>
+  <div class="card" style="padding:0">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line)">
+      <span style="font-size:13px;font-weight:600;color:var(--muted)">smart_roas_unified_output.sql</span>
+      <button id="copyBtn" onclick="copySql()" style="font-size:12px;font-weight:600;padding:5px 12px;border-radius:6px;border:1px solid var(--line);background:var(--gray-bg);color:var(--ink);cursor:pointer">Copy</button>
+    </div>
+    <pre id="sqlBlock" style="margin:0;padding:18px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.55;color:var(--ink);background:#fbfaf6;border-radius:0 0 12px 12px">-- ============================================================
+-- Smart ROAS — V1 Unified Output  (GoogleSQL / BigQuery)
+-- ============================================================
+-- One row per offer_code x country x keyword:
+--   bid  = the bid to apply (new bid for existing kws, starting bid for added kws)
+--   tag  = the action taken
+--
+-- Combines:
+--   - existing keywords: circuit breaker / TIGHTEN bid decisions / HOLD
+--   - new keywords:       EXPAND additions
+--
+-- keyword_performance and organic_keywords each have TWO versions:
+--   (A) dummy data  — active, lets the file run standalone
+--   (B) real query  — commented out, the production source.
+--       To go live: comment out (A), uncomment (B). The real query
+--       output columns match the dummy struct exactly.
+-- ============================================================
+
+
+-- ------------------------------------------------------------
+-- PARAMETERS
+-- ------------------------------------------------------------
+declare eval_window_days     int64    default 3;
+declare min_clicks           int64    default 25;
+declare max_cut_per_cycle    float64  default 0.30;
+declare block_cut            float64  default 0.12;
+declare cb_cut               float64  default 0.35;
+declare bid_floor            float64  default 0.05;
+declare roas_low_threshold   float64  default 0.80;
+declare bu_threshold         float64  default 0.80;
+declare min_org_views        int64    default 250;
+declare min_cvr              float64  default 0.03;
+declare expand_top_n         int64    default 5;
+
+
+with
+
+-- ------------------------------------------------------------
+-- DUMMY DATA 1: campaign_settings  (replace with real table)
+-- One row per campaign: the seller&#x27;s target ROAS + daily budget.
+-- ------------------------------------------------------------
+campaign_settings as (
+  select * from unnest([
+    struct(&#x27;offer_code_1&#x27; as offer_code, &#x27;sa&#x27; as country, 5.0 as target_roas, 100.0 as daily_budget),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            4.0,                  60.0),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            6.0,                  80.0)
+  ])
+),
+
+-- ------------------------------------------------------------
+-- DUMMY DATA 2: campaign_structure  (replace with real config table)
+-- One row per keyword currently in a campaign, with its current bid.
+-- (original_bid removed - V1 only cuts, so the clamp is floor-only.)
+-- ------------------------------------------------------------
+campaign_structure as (
+  select * from unnest([
+    struct(&#x27;offer_code_1&#x27; as offer_code, &#x27;sa&#x27; as country, &#x27;good keyword 1&#x27; as keyword, 1.00 as current_bid),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;good keyword 2&#x27;,           0.80),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;mid keyword 1&#x27;,            0.60),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 1&#x27;,           0.40),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 2&#x27;,           0.40),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;zero data kw 1&#x27;,           0.30),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;bad keyword 1&#x27;,            0.90),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;bad keyword 2&#x27;,            0.70),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;ok keyword 1&#x27;,             0.50),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 3&#x27;,           0.30),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 1&#x27;,          1.20),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 2&#x27;,          1.00)
+  ])
+),
+
+-- ------------------------------------------------------------
+-- KEYWORD PERFORMANCE — version (A): DUMMY DATA  [ACTIVE]
+-- Per offer_code x country x keyword over the eval window.
+-- To go live: comment this CTE out, uncomment version (B) below.
+-- ------------------------------------------------------------
+keyword_performance as (
+  select * from unnest([
+    struct(&#x27;offer_code_1&#x27; as offer_code, &#x27;sa&#x27; as country, &#x27;good keyword 1&#x27; as keyword,
+           1200 as views, 80 as clicks, 30.0 as spend_usd, 210.0 as gmv_usd),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;good keyword 2&#x27;,
+           900,            55,           22.0,                88.0),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;mid keyword 1&#x27;,
+           400,            30,           14.0,                70.0),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 1&#x27;,
+           60,             6,            3.0,                 6.0),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 2&#x27;,
+           45,             4,            2.5,                 9.0),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;zero data kw 1&#x27;,
+           5,              0,            0.0,                 0.0),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;bad keyword 1&#x27;,
+           1100,           70,           40.0,                60.0),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;bad keyword 2&#x27;,
+           800,            50,           28.0,                42.0),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;ok keyword 1&#x27;,
+           600,            40,           18.0,                90.0),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 3&#x27;,
+           50,             5,            3.0,                 4.0),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 1&#x27;,
+           1500,           95,           45.0,                360.0),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 2&#x27;,
+           1200,           75,           34.0,                238.0)
+  ])
+),
+
+/* ------------------------------------------------------------
+-- KEYWORD PERFORMANCE — version (B): REAL QUERY  [COMMENTED OUT]
+-- The product_ads_events keyword query, adjusted for the algorithm:
+--   * offer_code + country added to the grouping (algorithm is
+--     per-campaign; the original query pooled keywords across campaigns)
+--   * window = last eval_window_days (was current_date()-1)
+--   * output columns renamed to match version (A):
+--     offer_code, country, keyword, views, clicks, spend_usd, gmv_usd
+-- To go live: comment out version (A), uncomment this block.
+keyword_performance as (
+  with
+  country_curr as (
+    select *,
+      case
+        when code = &#x27;AED&#x27; then &#x27;ae&#x27;
+        when code = &#x27;SAR&#x27; then &#x27;sa&#x27;
+        when code = &#x27;EGP&#x27; then &#x27;eg&#x27;
+      end as country
+    from `noondwh.ref.currency`
+  ),
+  purchases as (
+    select
+      a.action_id,
+      e.event_time,
+      e.visitor_id,
+      e.sku,
+      a.tot_offer_amount as gmv
+    from `noonbiadtech.attribution.indexed_attribution`
+    where a.action_type = &#x27;purchase&#x27;
+      and event_date &gt;= current_date() - eval_window_days
+  )
+  select
+    t.offer_code,
+    t.country_code              as country,
+    t.target_value              as keyword,
+    sum(t.views)                as views,
+    sum(t.clicks)               as clicks,
+    round(sum(t.spends_usd), 2) as spend_usd,
+    sum(t.ad_gmv_usd)           as gmv_usd
+  from (
+    select
+      ev.offer_code,
+      c.country_code,
+      ev.target_value,
+      sum(case when ev.event_type = &#x27;view&#x27;  then 1 else 0 end) as views,
+      sum(case when ev.event_type = &#x27;click&#x27; then 1 else 0 end) as clicks,
+      round(sum(if(ev.event_type = &#x27;click&#x27;, ev.bid / to_usd, 0)), 2) as spends_usd,
+      sum(gmv / to_usd) as ad_gmv_usd
+    from `noonbiadtech.mp_ads_events.product_ads_events` ev
+      join `noondwh.ads_product_admanager.adgroup`  adg using (adgroup_code)
+      join `noondwh.ads_product_admanager.campaign` c   using (campaign_code)
+      left join purchases using (event_time, visitor_id, sku)
+      left join country_curr cr on cr.country = c.country_code
+    where c.campaign_type = &#x27;product&#x27;
+      and ev.event_date &gt;= current_date() - eval_window_days
+      and ev.targeting_type = &#x27;keyword&#x27;
+      and ev.ad_type in (&#x27;plp&#x27;,&#x27;merch_plp&#x27;,&#x27;pdp&#x27;,&#x27;slim_pdp&#x27;,&#x27;plpdeal&#x27;,&#x27;merchdeal&#x27;,&#x27;cart_product&#x27;)
+    group by 1, 2, 3, ev.event_date
+  ) as t
+  group by 1, 2, 3
+),
+------------------------------------------------------------ */
+
+-- ------------------------------------------------------------
+-- ORGANIC KEYWORDS — version (A): DUMMY DATA  [ACTIVE]
+-- EXPAND candidate pool. To go live: comment out, uncomment (B).
+-- ------------------------------------------------------------
+organic_keywords as (
+  select * from unnest([
+    struct(&#x27;offer_code_1&#x27; as offer_code, &#x27;sa&#x27; as country, &#x27;organic kw A&#x27; as keyword,
+           1800 as organic_views, 90 as organic_clicks, 6 as organic_orders),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;organic kw B&#x27;,
+           600,                    40,                    3),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;organic kw C&#x27;,
+           300,                    9,                     1),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;good keyword 1&#x27;,
+           900,                    50,                    4),
+    struct(&#x27;offer_code_1&#x27;,                &#x27;sa&#x27;,            &#x27;organic kw D&#x27;,
+           120,                    8,                     1),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;organic kw E&#x27;,
+           2400,                   140,                   11),
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;organic kw F&#x27;,
+           700,                    35,                    3)
+  ])
+),
+
+/* ------------------------------------------------------------
+-- ORGANIC KEYWORDS — version (B): REAL QUERY  [COMMENTED OUT]
+-- From product_performance_aggregated, all organic keyword activity
+-- for each offer_code x country.
+--   organic_views  = views  - ads_views   (clipped at 0)
+--   organic_clicks = clicks - ads_clicks  (clipped at 0)
+--   organic_orders ~ purchases (combined ads+organic; for keywords
+--     not in the campaign this is effectively all organic)
+-- No &quot;organic only&quot; filter here: keywords already in the campaign
+-- are removed later by the anti-join in expand_candidates
+-- (where cs.keyword is null) - the exact source of truth, not a proxy.
+-- To go live: comment out version (A), uncomment this block.
+organic_keywords as (
+  select
+    offer_code,
+    country_code as country,
+    search_query as keyword,
+    greatest(sum(views)  - sum(ads_views),  0) as organic_views,
+    greatest(sum(clicks) - sum(ads_clicks), 0) as organic_clicks,
+    sum(purchases)                             as organic_orders
+  from `noonbiadtech.organic_metrics.product_performance_aggregated`
+  where event_date &gt;= current_date() - eval_window_days
+  group by offer_code, country_code, search_query
+),
+------------------------------------------------------------ */
+
+-- ============================================================
+-- CAMPAIGN SIGNALS + MATRIX INTENT
+-- ============================================================
+campaign_perf as (
+  select offer_code, country,
+         sum(spend_usd) as campaign_spend,
+         sum(gmv_usd)   as campaign_gmv
+  from keyword_performance
+  group by offer_code, country
+),
+
+campaign_intent as (
+  select
+    s.offer_code,
+    s.country,
+    s.target_roas,
+    s.daily_budget,
+    safe_divide(safe_divide(cp.campaign_gmv, cp.campaign_spend), s.target_roas) as roas_pct,
+    safe_divide(cp.campaign_spend, s.daily_budget * eval_window_days)           as bu_pct,
+    case
+      when safe_divide(safe_divide(cp.campaign_gmv, cp.campaign_spend), s.target_roas) &lt; roas_low_threshold
+        then &#x27;TIGHTEN&#x27;
+      when safe_divide(cp.campaign_spend, s.daily_budget * eval_window_days) &lt; bu_threshold
+        then &#x27;EXPAND&#x27;
+      else &#x27;HOLD&#x27;
+    end as intent,
+    ( safe_divide(cp.campaign_spend, s.daily_budget * eval_window_days) &gt; bu_threshold
+      and safe_divide(safe_divide(cp.campaign_gmv, cp.campaign_spend), s.target_roas) &lt; roas_low_threshold
+    ) as circuit_breaker
+  from campaign_settings s
+  left join campaign_perf cp using (offer_code, country)
+),
+
+-- ============================================================
+-- BRANCH A — EXISTING KEYWORDS (circuit breaker / TIGHTEN / HOLD)
+-- ============================================================
+keyword_metrics as (
+  select
+    cs.offer_code, cs.country, cs.keyword,
+    cs.current_bid,
+    coalesce(kp.clicks, 0)    as clicks,
+    coalesce(kp.spend_usd, 0) as spend_usd,
+    coalesce(kp.gmv_usd, 0)   as gmv_usd,
+    safe_divide(kp.gmv_usd, kp.spend_usd) as keyword_roas,
+    case
+      when coalesce(kp.clicks, 0) &gt;= min_clicks then &#x27;TIER1_INDIVIDUAL&#x27;
+      when coalesce(kp.clicks, 0) &gt; 0           then &#x27;TIER2_LONGTAIL&#x27;
+      else                                           &#x27;TIER3_NODATA&#x27;
+    end as tier
+  from campaign_structure cs
+  left join keyword_performance kp using (offer_code, country, keyword)
+),
+
+longtail_block as (
+  select offer_code, country,
+         safe_divide(sum(gmv_usd), sum(spend_usd)) as block_roas
+  from keyword_metrics
+  where tier = &#x27;TIER2_LONGTAIL&#x27;
+  group by offer_code, country
+),
+
+existing_keyword_output as (
+  select
+    km.offer_code,
+    km.country,
+    km.keyword,
+
+    -- cut factor by branch
+    --   ratio-based: ROAS proportional to 1/bid, so bid scales by keyword_ROAS/target_ROAS
+    case
+      when ci.circuit_breaker                                              then cb_cut
+      when ci.intent != &#x27;TIGHTEN&#x27;                                          then 0
+      when km.tier = &#x27;TIER1_INDIVIDUAL&#x27; and km.keyword_roas &lt; ci.target_roas
+        then least(1 - safe_divide(km.keyword_roas, ci.target_roas),
+                   max_cut_per_cycle)
+      when km.tier = &#x27;TIER2_LONGTAIL&#x27; and lb.block_roas &lt; ci.target_roas    then block_cut
+      else 0
+    end as cut_factor,
+
+    km.current_bid,
+    km.tier,
+    km.keyword_roas,
+    ci.target_roas,
+    ci.intent,
+    ci.circuit_breaker,
+    lb.block_roas
+  from keyword_metrics km
+  join campaign_intent ci     using (offer_code, country)
+  left join longtail_block lb using (offer_code, country)
+),
+
+branch_a as (
+  select
+    offer_code,
+    country,
+    keyword,
+    -- final bid: apply cut, clamp at bid_floor (V1 only cuts, so no upper clamp needed)
+    round(
+      greatest(current_bid * (1 - cut_factor), bid_floor),
+      4
+    ) as bid,
+    -- action tag
+    case
+      when circuit_breaker                                       then &#x27;CIRCUIT_BREAKER_CUT&#x27;
+      when intent = &#x27;HOLD&#x27;                                       then &#x27;HOLD&#x27;
+      when intent = &#x27;EXPAND&#x27;                                     then &#x27;HOLD_BID&#x27;   -- EXPAND adds kws, leaves bids
+      when tier = &#x27;TIER3_NODATA&#x27;                                 then &#x27;HOLD_NO_DATA&#x27;
+      when tier = &#x27;TIER1_INDIVIDUAL&#x27; and keyword_roas &gt;= target_roas
+                                                                 then &#x27;HOLD_ON_TARGET&#x27;
+      when tier = &#x27;TIER1_INDIVIDUAL&#x27;                             then &#x27;CUT_PROPORTIONAL&#x27;
+      when tier = &#x27;TIER2_LONGTAIL&#x27; and block_roas &lt; target_roas  then &#x27;CUT_LONGTAIL_BLOCK&#x27;
+      when tier = &#x27;TIER2_LONGTAIL&#x27;                               then &#x27;HOLD_LONGTAIL_OK&#x27;
+      else &#x27;HOLD&#x27;
+    end as tag
+  from existing_keyword_output
+),
+
+-- ============================================================
+-- BRANCH B — NEW KEYWORDS (EXPAND additions)
+-- ============================================================
+campaign_avg_bid as (
+  select offer_code, country, round(avg(current_bid), 4) as avg_bid
+  from campaign_structure
+  group by offer_code, country
+),
+
+expand_candidates as (
+  select
+    ok.offer_code,
+    ok.country,
+    ok.keyword,
+    cab.avg_bid as starting_bid,
+    row_number() over (
+      partition by ok.offer_code, ok.country
+      order by ok.organic_orders desc, ok.organic_views desc
+    ) as rn
+  from organic_keywords ok
+  join campaign_intent ci   using (offer_code, country)
+  join campaign_avg_bid cab using (offer_code, country)
+  -- not already in the campaign
+  left join campaign_structure cs
+    on  cs.offer_code = ok.offer_code
+    and cs.country    = ok.country
+    and cs.keyword    = ok.keyword
+  where ci.intent = &#x27;EXPAND&#x27;                                  -- only EXPAND campaigns
+    and cs.keyword is null                                    -- genuine new keyword
+    and ok.organic_views &gt;= min_org_views                     -- noise floor
+    and safe_divide(ok.organic_orders, ok.organic_clicks) &gt;= min_cvr   -- quality floor
+),
+
+branch_b as (
+  select
+    offer_code,
+    country,
+    keyword,
+    starting_bid as bid,
+    &#x27;ADD_EXPAND&#x27; as tag
+  from expand_candidates
+  where rn &lt;= expand_top_n
+)
+
+-- ============================================================
+-- UNIFIED OUTPUT
+-- ============================================================
+select offer_code, country, keyword, bid, tag from branch_a
+union all
+select offer_code, country, keyword, bid, tag from branch_b
+order by offer_code, country,
+         case when tag = &#x27;ADD_EXPAND&#x27; then 2 else 1 end,   -- existing kws first, added kws after
+         keyword;
+</pre>
+  </div>
+  <script>
+    function copySql() {
+      var t = document.getElementById('sqlBlock').innerText;
+      navigator.clipboard.writeText(t).then(function(){
+        var b = document.getElementById('copyBtn');
+        b.textContent = 'Copied';
+        setTimeout(function(){ b.textContent = 'Copy'; }, 1500);
+      });
+    }
+  </script>
+
+</div>
+</body>
+</html>
