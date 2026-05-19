@@ -127,7 +127,7 @@
   <div class="sub">Target-ROAS auto-managed campaigns · 1 offer_code = 1 campaign · 3-day evaluation loop</div>
 
   <!-- ============ STEP 1: MATRIX ============ -->
-  <h2>Step 1 — Campaign decision matrix (BU% × ROAS%)</h2>
+  <h2>Campaign decision matrix (BU% × ROAS%)</h2>
   <p>Every 3 days, each campaign is assessed on two signals computed over the trailing 3-day window:
      <strong>ROAS%</strong> = actual ROAS ÷ target ROAS, and <strong>BU%</strong> = spend ÷ daily budget.
      The cell determines one intent: TIGHTEN, EXPAND, or HOLD.</p>
@@ -142,38 +142,35 @@
       </tr>
       <tr>
         <td class="rowlabel">BU%<br>&lt; 80%</td>
-        <td><div class="cell c-red"><div class="intent">TIGHTEN</div><div class="desc">underperforming · budget headroom</div></div></td>
-        <td><div class="cell c-teal"><div class="intent">EXPAND</div><div class="desc">on target · budget headroom</div></div></td>
-        <td><div class="cell c-teal"><div class="intent">EXPAND</div><div class="desc">over-delivering · budget headroom</div></div></td>
+        <td><div class="cell c-red"><div class="intent">TIGHTEN</div><div class="desc">cut bids + add keywords</div></div></td>
+        <td><div class="cell c-teal"><div class="intent">EXPAND</div><div class="desc">add keywords</div></div></td>
+        <td><div class="cell c-teal"><div class="intent">EXPAND</div><div class="desc">add keywords + raise bids</div></div></td>
       </tr>
       <tr>
         <td class="rowlabel">BU%<br>&gt; 80%</td>
-        <td><div class="cell c-red"><div class="intent">TIGHTEN</div><div class="desc">underperforming · budget fully spent</div></div></td>
-        <td><div class="cell c-gray"><div class="intent">HOLD</div><div class="desc">on target · not touch</div></div></td>
-        <td><div class="cell c-gray"><div class="intent">HOLD</div><div class="desc">over-delivering · not touch</div></div></td>
+        <td><div class="cell c-red"><div class="intent">TIGHTEN</div><div class="desc">cut bids</div></div></td>
+        <td><div class="cell c-gray"><div class="intent">HOLD</div><div class="desc">not touch</div></div></td>
+        <td><div class="cell c-gray"><div class="intent">HOLD</div><div class="desc">not touch</div></div></td>
       </tr>
     </table>
     <div class="legend">
       <span><span class="dot" style="background:var(--red-bg);border-color:var(--red-bd)"></span>TIGHTEN — cut bids</span>
-      <span><span class="dot" style="background:var(--teal-bg);border-color:var(--teal-bd)"></span>EXPAND — add keywords</span>
+      <span><span class="dot" style="background:var(--teal-bg);border-color:var(--teal-bd)"></span>EXPAND — raise bids if ROAS &gt; 120%</span>
       <span><span class="dot" style="background:var(--gray-bg);border-color:var(--gray-bd)"></span>HOLD — no action</span>
     </div>
+    <p style="font-size:12.5px;color:var(--muted);font-style:italic;margin-top:10px">Keyword adding is separate from intent — it runs whenever BU% &lt; 80% (the whole top row), for TIGHTEN and EXPAND alike.</p>
   </div>
 
-  <!-- ============ CIRCUIT BREAKER ============ -->
-  <h2>Step 0 — Daily circuit breaker</h2>
-  <p>Runs every day, independent of the 3-day loop. A safety guardrail, not an optimiser — fires only in the clear-disaster case.</p>
-  <div class="card">
-    <div class="flow">
-      <div class="step red">
-        <div class="label">Trigger: BU% &gt; 80% AND ROAS% &lt; 80%</div>
-        <div class="body">Campaign is spending its full budget at bad efficiency — real money lost, can't wait for the 3-day cycle. BU &gt; 80% also self-gates against noise (can't spend a full budget on a handful of clicks).</div>
-      </div>
-      <div class="step red">
-        <div class="label">Action: one-time aggressive cut on all keyword bids</div>
-        <div class="body">A single large cut across the campaign. Not repeated daily — fires once when the condition is met, then the 3-day loop takes over.</div>
-      </div>
-    </div>
+  <!-- ============ CIRCUIT BREAKER (DEFERRED) ============ -->
+  <h2>Daily circuit breaker — deferred to V2</h2>
+  <div class="card" style="border-left:3px solid var(--amber-bd)">
+    <p style="margin-bottom:8px">A daily safety check — <code>BU% &gt; 80% AND ROAS% &lt; 80%</code> → one-time aggressive cut — was
+       designed to catch a campaign burning its full budget at bad efficiency without waiting for the 3-day cycle.</p>
+    <p style="margin-bottom:8px"><strong>Not in V1.</strong> It is a genuinely separate job: a daily query on a
+       1-day window, distinct from this 3-day optimisation loop. Folding it into the unified 3-day query would
+       make it a 3-day condition, not a daily safety net — which defeats its purpose.</p>
+    <p style="margin:0">V1 ships with the 3-day loop only. The circuit breaker is a V2 item: a standalone daily
+       query running just the emergency-cut branch. The unified SQL below does not include it.</p>
   </div>
 
   <!-- ============ TIGHTEN ============ -->
@@ -211,43 +208,54 @@
         </ul>
       </div>
     </div>
-    <h3>Proportional cut (Tier 1) — ratio-based, with per-cycle cap</h3>
-    <p style="margin-bottom:6px">ROAS and bid are inversely related (ROAS ∝ 1/bid). To move a keyword's ROAS to target, the bid scales by the ratio of current ROAS to target ROAS.</p>
-    <div class="formula">raw_cut    = 1 − (keyword_ROAS / target_ROAS)&nbsp;&nbsp;&nbsp;// implied cut to hit target
-cut_factor = min(raw_cut, MAX_CUT_PER_CYCLE)&nbsp;&nbsp;&nbsp;// cap one cycle's cut
-new_bid    = current_bid × (1 − cut_factor)</div>
-    <h3>Clamp (all tiers)</h3>
-    <div class="formula">new_bid = max(new_bid, bid_floor)&nbsp;&nbsp;&nbsp;// floor-only — V1 only ever cuts</div>
-    <div class="note">The cut is derived from the actual bid↔ROAS relationship, not a tuned coefficient — a keyword at 37.5% of target ROAS implies its bid should drop to 37.5% of current. The cap (MAX_CUT_PER_CYCLE) bounds how far a bid can fall in one 3-day cycle, so a very bad keyword converges over a few cycles instead of one violent swing. The circuit breaker is exempt from the cap. V1 has no bid-recovery step — bids only ratchet down, so the clamp only needs a floor (a cut can never raise a bid above its current value).</div>
+    <h3>Bid cut — Tier 1, ratio-based</h3>
+    <div class="formula">cut_factor = min( 1 − keyword_ROAS / target_ROAS , MAX_CUT_PER_CYCLE )
+new_bid    = max( current_bid × (1 − cut_factor) , bid_floor )</div>
+    <p style="margin:6px 0 0">ROAS ∝ 1/bid, so the bid scales by keyword_ROAS / target_ROAS. A keyword at 37.5% of target → bid drops to ~37.5% of current. The cap limits how far a bid can fall in one cycle; big misses converge over several cycles.</p>
   </div>
 
-  <!-- ============ EXPAND ============ -->
-  <h2>Deep dive — EXPAND</h2>
-  <p>Campaign ROAS% ≥ 80% AND BU% &lt; 80%. The campaign is healthy but not spending its full budget.
-     Low budget use is a <strong>coverage</strong> problem, not a bid problem — EXPAND adds keywords and does not touch bids.</p>
+  <!-- ============ KEYWORD ADDING ============ -->
+  <h2>Deep dive — keyword adding</h2>
+  <p>Keyword adding is driven by <strong>BU% &lt; 80%</strong> (budget headroom), not by intent — it runs for
+     any campaign with budget headroom, whether TIGHTEN or EXPAND. A TIGHTEN campaign with BU% &gt; 80%
+     (already spending its full budget) does not add keywords. Low budget use is usually a coverage problem
+     (too few keywords), so the fix is to add proven keywords.</p>
 
   <div class="card">
     <div class="flow">
       <div class="step teal">
         <div class="label">Source candidates</div>
-        <div class="body">Pull organic keywords for this offer_code from <code>product_performance_aggregated</code> — organic only (keywords not established on ads).</div>
+        <div class="body">Pull organic keywords for this offer_code from <code>product_performance_aggregated</code> (30-day window).</div>
       </div>
       <div class="step teal">
         <div class="label">Filter</div>
-        <div class="body">Keep a candidate only if: organic views ≥ MIN_ORG_VIEWS (kills noise — proven demand), organic CVR ≥ MIN_CVR (quality gate), and the keyword is not already in the campaign (genuine add).</div>
+        <div class="body">Keep a candidate only if: organic views ≥ MIN_ORG_VIEWS (kills noise — proven demand) and organic CVR ≥ MIN_CVR (quality gate).</div>
       </div>
       <div class="step teal">
-        <div class="label">Rank</div>
-        <div class="body">Sort survivors by organic orders, descending. Orders — not raw CVR — so tiny high-variance keywords don't float to the top.</div>
+        <div class="label">Rank → fixed top-N pool</div>
+        <div class="body">Sort by organic orders descending; the candidate pool is the top ORGANIC_POOL_N (10). Orders, not raw CVR — so tiny high-variance keywords don't float up.</div>
       </div>
       <div class="step teal">
-        <div class="label">Add top N</div>
-        <div class="body">Add the top N keywords to the campaign at a starting bid equal to the campaign's current average keyword bid.</div>
+        <div class="label">Add up to N per cycle</div>
+        <div class="body">Add up to ADD_PER_CYCLE (5) keywords from the pool that aren't already in the campaign, at a flat ADD_START_BID. Once the campaign holds the whole top-10 pool, nothing more is added — adding stops on its own.</div>
       </div>
     </div>
-    <div class="note">CVR is a filter, not the sort key. Ranking by CVR alone surfaces low-volume keywords with extreme ratios. Ranking by organic orders favours keywords that are both high-demand and converting.</div>
+    <div class="note">The fixed top-10 pool is the natural stop condition: adding draws only from it, so once exhausted, the campaign is done — no separate cap or counter needed. New keywords start at a low flat bid (ADD_START_BID); if they convert they survive, if not the next TIGHTEN cycle cuts them.</div>
   </div>
 
+  <!-- ============ EXPAND ============ -->
+  <h2>Deep dive — EXPAND</h2>
+  <p>Campaign ROAS% ≥ 80% AND BU% &lt; 80% — healthy, with budget headroom. EXPAND always adds keywords
+     (see keyword adding above, which it shares with TIGHTEN). In addition, when the campaign is
+     <strong>over-delivering — ROAS% &gt; 120%</strong> — it raises bids on Tier 1 keywords to put the spare
+     budget to work on proven winners.</p>
+
+  <div class="card">
+    <h3>Bid raise — Tier 1, only when campaign ROAS% &gt; 120%</h3>
+    <div class="formula">raise_factor = min( keyword_ROAS / target_ROAS − 1 , MAX_RAISE_PER_CYCLE )
+new_bid      = min( current_bid × (1 + raise_factor) , bid_ceiling )</div>
+    <p style="margin:6px 0 0">Mirror of the TIGHTEN cut. Only fires for over-delivering campaigns (ROAS% &gt; 120%), so there is ROAS headroom before a higher bid pulls ROAS back to target. The raise cap is set below the cut cap — a bad raise overspends, so steps are smaller. Long-tail and no-data tiers are never raised. The ROAS% 80–120% EXPAND cell adds keywords only — no bid raise, since there is no headroom above target.</p>
+  </div>
   <!-- ============ HOLD ============ -->
   <h2>HOLD</h2>
   <div class="card">
@@ -263,23 +271,26 @@ new_bid    = current_bid × (1 − cut_factor)</div>
       <tr><th>Parameter</th><th>Controls</th><th>Used by</th><th>Suggested start</th></tr>
       <tr><td><code>MIN_CLICKS</code></td><td>Tier 1 vs long-tail split per keyword</td><td><span class="pill red">TIGHTEN</span></td><td>20–30 clicks</td></tr>
       <tr><td><code>MAX_CUT_PER_CYCLE</code></td><td>Cap on a single cycle's bid decrease</td><td><span class="pill red">TIGHTEN</span></td><td>30%</td></tr>
-      <tr><td>Block cut size</td><td>Uniform long-tail block cut</td><td><span class="pill red">TIGHTEN</span></td><td>flat 10–15%</td></tr>
-      <tr><td><code>bid_floor</code> / <code>bid_ceiling</code></td><td>Bid bounds</td><td><span class="pill red">TIGHTEN</span></td><td>from existing bid logic</td></tr>
-      <tr><td>Circuit breaker cut</td><td>Day-1 emergency cut size</td><td>Step 0</td><td>≈ 30–40%</td></tr>
-      <tr><td><code>MIN_ORG_VIEWS</code></td><td>Volume floor — noise filter</td><td><span class="pill teal">EXPAND</span></td><td>≈ 250</td></tr>
-      <tr><td><code>MIN_CVR</code></td><td>Quality floor for candidates</td><td><span class="pill teal">EXPAND</span></td><td>campaign CVR, or ≈ 3%</td></tr>
-      <tr><td><code>N</code></td><td>Keywords added per EXPAND cycle</td><td><span class="pill teal">EXPAND</span></td><td>3–5</td></tr>
-      <tr><td>starting bid</td><td>Bid for newly added keywords</td><td><span class="pill teal">EXPAND</span></td><td>campaign avg keyword bid</td></tr>
+      <tr><td><code>BLOCK_CUT</code></td><td>Uniform long-tail block cut</td><td><span class="pill red">TIGHTEN</span></td><td>flat 10–15%</td></tr>
+      <tr><td><code>MAX_RAISE_PER_CYCLE</code></td><td>Cap on a single cycle's bid increase</td><td><span class="pill teal">EXPAND</span></td><td>15–20%</td></tr>
+      <tr><td><code>bid_floor</code></td><td>Lower bound on any bid</td><td><span class="pill red">TIGHTEN</span></td><td>from existing bid logic</td></tr>
+      <tr><td><code>bid_ceiling</code></td><td>Upper bound for raised bids</td><td><span class="pill teal">EXPAND</span></td><td>from existing bid logic</td></tr>
+      <tr><td><code>MIN_ORG_VIEWS</code></td><td>Volume floor — noise filter</td><td><span class="pill teal">ADD</span></td><td>≈ 250</td></tr>
+      <tr><td><code>MIN_CVR</code></td><td>Quality floor for candidates</td><td><span class="pill teal">ADD</span></td><td>≈ 3%</td></tr>
+      <tr><td><code>ORGANIC_POOL_N</code></td><td>Candidate pool size (top-N organic)</td><td><span class="pill teal">ADD</span></td><td>10</td></tr>
+      <tr><td><code>ADD_PER_CYCLE</code></td><td>Max keywords added per cycle</td><td><span class="pill teal">ADD</span></td><td>5</td></tr>
+      <tr><td><code>ADD_START_BID</code></td><td>Starting bid for added keywords</td><td><span class="pill teal">ADD</span></td><td>0.25</td></tr>
     </table>
   </div>
 
   <!-- ============ NOTES ============ -->
   <h2>V1 scope notes</h2>
   <div class="card">
-    <p style="margin-bottom:8px">· First optimisation runs ~Day 4 (needs a 3-day window). Days 2–3 are pure learning; only the circuit breaker is active.</p>
+    <p style="margin-bottom:8px">· First optimisation runs ~Day 4 (needs a 3-day window). Days 1–3 are pure learning — no actions taken.</p>
+    <p style="margin-bottom:8px">· The daily circuit breaker is deferred to V2 — see the flagged section above. V1 is the 3-day loop only.</p>
     <p style="margin-bottom:8px">· No keyword removal in V1 — bad keywords are handled by aggressive bid cuts, not by negative targets.</p>
     <p style="margin-bottom:8px">· No exploration/performance budget split in V1 — the entire daily budget is performance budget.</p>
-    <p style="margin-bottom:8px">· No bid recovery — bids only ratchet down. Campaigns will need periodic resets, or recovery added in V2.</p>
+    <p style="margin-bottom:8px">· Bids cut for underperformers, raised only for over-delivering campaigns (ROAS &gt; 120%). Raise cap is tighter than cut cap.</p>
     <p style="margin:0">· All joins on offer_code × country. Target ROAS and daily budget come from the campaign_settings table.</p>
   </div>
 
@@ -299,7 +310,7 @@ new_bid    = current_bid × (1 − cut_factor)</div>
 --   tag  = the action taken
 --
 -- Combines:
---   - existing keywords: circuit breaker / TIGHTEN bid decisions / HOLD
+--   - existing keywords: TIGHTEN bid decisions / EXPAND raises / HOLD
 --   - new keywords:       EXPAND additions
 --
 -- keyword_performance and organic_keywords each have TWO versions:
@@ -316,14 +327,18 @@ new_bid    = current_bid × (1 − cut_factor)</div>
 declare eval_window_days     int64    default 3;
 declare min_clicks           int64    default 25;
 declare max_cut_per_cycle    float64  default 0.30;
+declare max_raise_per_cycle  float64  default 0.18;   -- raise cap, tighter than cut cap
 declare block_cut            float64  default 0.12;
-declare cb_cut               float64  default 0.35;
 declare bid_floor            float64  default 0.05;
+declare bid_ceiling          float64  default 5.00;   -- upper bound for raised bids
 declare roas_low_threshold   float64  default 0.80;
+declare roas_high_threshold  float64  default 1.20;   -- ROAS% &gt; 120% -&gt; raise eligible
 declare bu_threshold         float64  default 0.80;
 declare min_org_views        int64    default 250;
 declare min_cvr              float64  default 0.03;
-declare expand_top_n         int64    default 5;
+declare organic_pool_n       int64    default 10;     -- candidate pool: top N organic keywords
+declare add_per_cycle        int64    default 5;      -- max keywords added per cycle
+declare add_start_bid        float64  default 0.25;   -- starting bid for added keywords
 
 
 with
@@ -336,7 +351,10 @@ campaign_settings as (
   select * from unnest([
     struct(&#x27;offer_code_1&#x27; as offer_code, &#x27;sa&#x27; as country, 5.0 as target_roas, 100.0 as daily_budget),
     struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            4.0,                  60.0),
-    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            6.0,                  80.0)
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            6.0,                  80.0),
+    struct(&#x27;offer_code_4&#x27;,                &#x27;sa&#x27;,            5.0,                  50.0),   -- HOLD: good ROAS, high BU
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            3.0,                 200.0),   -- TIGHTEN with a healthy long-tail block
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            5.0,                 100.0)    -- EXPAND, organic pool already exhausted
   ])
 ),
 
@@ -358,7 +376,16 @@ campaign_structure as (
     struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;ok keyword 1&#x27;,             0.50),
     struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;long tail kw 3&#x27;,           0.30),
     struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 1&#x27;,          1.20),
-    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 2&#x27;,          1.00)
+    struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 2&#x27;,          1.00),
+    -- offer_code_4 : HOLD campaign (good ROAS, fully spending)
+    struct(&#x27;offer_code_4&#x27;,                &#x27;sa&#x27;,            &#x27;oc4 keyword 1&#x27;,            0.70),
+    -- offer_code_5 : TIGHTEN, but its long-tail block is healthy
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            &#x27;oc5 bad kw&#x27;,               0.80),
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            &#x27;oc5 lt a&#x27;,                 0.35),
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            &#x27;oc5 lt b&#x27;,                 0.30),
+    -- offer_code_6 : EXPAND, but all its organic candidates are already in the campaign
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            &#x27;oc6 keyword 1&#x27;,            0.90),
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            &#x27;oc6 keyword 2&#x27;,            0.60)
   ])
 ),
 
@@ -392,7 +419,22 @@ keyword_performance as (
     struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 1&#x27;,
            1500,           95,           45.0,                360.0),
     struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;great keyword 2&#x27;,
-           1200,           75,           34.0,                238.0)
+           1200,           75,           34.0,                238.0),
+    -- offer_code_4 : HOLD — ROAS on target (5.0), BU% high (130/150 = 0.87)
+    struct(&#x27;offer_code_4&#x27;,                &#x27;sa&#x27;,            &#x27;oc4 keyword 1&#x27;,
+           2000,           120,          130.0,               650.0),
+    -- offer_code_5 : TIGHTEN campaign overall, but the long-tail block beats target
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            &#x27;oc5 bad kw&#x27;,
+           1500,           90,           50.0,                30.0),    -- Tier 1, ROAS 0.6 -&gt; cut
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            &#x27;oc5 lt a&#x27;,
+           80,             8,            4.0,                 20.0),    -- long-tail, ROAS 5.0
+    struct(&#x27;offer_code_5&#x27;,                &#x27;sa&#x27;,            &#x27;oc5 lt b&#x27;,
+           60,             6,            3.0,                 14.0),    -- long-tail, ROAS 4.67
+    -- offer_code_6 : EXPAND — healthy, low BU
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            &#x27;oc6 keyword 1&#x27;,
+           1400,           85,           18.0,                100.0),
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            &#x27;oc6 keyword 2&#x27;,
+           300,            10,            2.0,                 9.0)
   ])
 ),
 
@@ -478,7 +520,18 @@ organic_keywords as (
     struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;organic kw E&#x27;,
            2400,                   140,                   11),
     struct(&#x27;offer_code_3&#x27;,                &#x27;ae&#x27;,            &#x27;organic kw F&#x27;,
-           700,                    35,                    3)
+           700,                    35,                    3),
+    -- offer_code_2 : TIGHTEN campaign with BU &lt; 80% -&gt; these should still be added
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;organic kw P&#x27;,
+           1200,                   50,                    7),
+    struct(&#x27;offer_code_2&#x27;,                &#x27;sa&#x27;,            &#x27;organic kw Q&#x27;,
+           400,                    18,                    3),
+    -- offer_code_6 : organic candidates are keywords already in the campaign
+    --   -&gt; pool is non-empty but the anti-join removes all -&gt; 0 adds (pool exhaustion)
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            &#x27;oc6 keyword 1&#x27;,
+           1500,                   80,                    6),
+    struct(&#x27;offer_code_6&#x27;,                &#x27;ae&#x27;,            &#x27;oc6 keyword 2&#x27;,
+           500,                    25,                    2)
   ])
 ),
 
@@ -503,7 +556,8 @@ organic_keywords as (
     greatest(sum(clicks) - sum(ads_clicks), 0) as organic_clicks,
     sum(purchases)                             as organic_orders
   from `noonbiadtech.organic_metrics.product_performance_aggregated`
-  where event_date &gt;= current_date() - eval_window_days
+  -- no date filter: the table carries a 30-day window by default,
+  -- which is the stable ranking window we want for the candidate pool
   group by offer_code, country_code, search_query
 ),
 ------------------------------------------------------------ */
@@ -533,16 +587,13 @@ campaign_intent as (
       when safe_divide(cp.campaign_spend, s.daily_budget * eval_window_days) &lt; bu_threshold
         then &#x27;EXPAND&#x27;
       else &#x27;HOLD&#x27;
-    end as intent,
-    ( safe_divide(cp.campaign_spend, s.daily_budget * eval_window_days) &gt; bu_threshold
-      and safe_divide(safe_divide(cp.campaign_gmv, cp.campaign_spend), s.target_roas) &lt; roas_low_threshold
-    ) as circuit_breaker
+    end as intent
   from campaign_settings s
   left join campaign_perf cp using (offer_code, country)
 ),
 
 -- ============================================================
--- BRANCH A — EXISTING KEYWORDS (circuit breaker / TIGHTEN / HOLD)
+-- BRANCH A — EXISTING KEYWORDS (TIGHTEN cuts / EXPAND raises / HOLD)
 -- ============================================================
 keyword_metrics as (
   select
@@ -575,24 +626,38 @@ existing_keyword_output as (
     km.country,
     km.keyword,
 
-    -- cut factor by branch
+    -- bid multiplier: &lt;1 cut, &gt;1 raise, =1 hold
     --   ratio-based: ROAS proportional to 1/bid, so bid scales by keyword_ROAS/target_ROAS
     case
-      when ci.circuit_breaker                                              then cb_cut
-      when ci.intent != &#x27;TIGHTEN&#x27;                                          then 0
-      when km.tier = &#x27;TIER1_INDIVIDUAL&#x27; and km.keyword_roas &lt; ci.target_roas
-        then least(1 - safe_divide(km.keyword_roas, ci.target_roas),
-                   max_cut_per_cycle)
-      when km.tier = &#x27;TIER2_LONGTAIL&#x27; and lb.block_roas &lt; ci.target_roas    then block_cut
-      else 0
-    end as cut_factor,
+      -- TIGHTEN: cut underperforming keywords
+      when ci.intent = &#x27;TIGHTEN&#x27;
+           and km.tier = &#x27;TIER1_INDIVIDUAL&#x27;
+           and km.keyword_roas &lt; ci.target_roas
+        then 1 - least(1 - safe_divide(km.keyword_roas, ci.target_roas),
+                       max_cut_per_cycle)
+      when ci.intent = &#x27;TIGHTEN&#x27;
+           and km.tier = &#x27;TIER2_LONGTAIL&#x27;
+           and lb.block_roas &lt; ci.target_roas
+        then 1 - block_cut
+
+      -- EXPAND + campaign over-delivering (ROAS% &gt; 120%): raise Tier 1 keywords
+      when ci.intent = &#x27;EXPAND&#x27;
+           and ci.roas_pct &gt; roas_high_threshold
+           and km.tier = &#x27;TIER1_INDIVIDUAL&#x27;
+           and km.keyword_roas &gt; ci.target_roas
+        then 1 + least(safe_divide(km.keyword_roas, ci.target_roas) - 1,
+                       max_raise_per_cycle)
+
+      -- everything else: hold
+      else 1
+    end as bid_multiplier,
 
     km.current_bid,
     km.tier,
     km.keyword_roas,
     ci.target_roas,
+    ci.roas_pct,
     ci.intent,
-    ci.circuit_breaker,
     lb.block_roas
   from keyword_metrics km
   join campaign_intent ci     using (offer_code, country)
@@ -604,58 +669,76 @@ branch_a as (
     offer_code,
     country,
     keyword,
-    -- final bid: apply cut, clamp at bid_floor (V1 only cuts, so no upper clamp needed)
+    -- apply multiplier, then clamp to [bid_floor, bid_ceiling]
     round(
-      greatest(current_bid * (1 - cut_factor), bid_floor),
-      4
+      least(
+        greatest(current_bid * bid_multiplier, bid_floor),
+        bid_ceiling
+      ), 4
     ) as bid,
     -- action tag
     case
-      when circuit_breaker                                       then &#x27;CIRCUIT_BREAKER_CUT&#x27;
       when intent = &#x27;HOLD&#x27;                                       then &#x27;HOLD&#x27;
-      when intent = &#x27;EXPAND&#x27;                                     then &#x27;HOLD_BID&#x27;   -- EXPAND adds kws, leaves bids
       when tier = &#x27;TIER3_NODATA&#x27;                                 then &#x27;HOLD_NO_DATA&#x27;
-      when tier = &#x27;TIER1_INDIVIDUAL&#x27; and keyword_roas &gt;= target_roas
+      when intent = &#x27;TIGHTEN&#x27; and tier = &#x27;TIER1_INDIVIDUAL&#x27; and keyword_roas &gt;= target_roas
                                                                  then &#x27;HOLD_ON_TARGET&#x27;
-      when tier = &#x27;TIER1_INDIVIDUAL&#x27;                             then &#x27;CUT_PROPORTIONAL&#x27;
-      when tier = &#x27;TIER2_LONGTAIL&#x27; and block_roas &lt; target_roas  then &#x27;CUT_LONGTAIL_BLOCK&#x27;
-      when tier = &#x27;TIER2_LONGTAIL&#x27;                               then &#x27;HOLD_LONGTAIL_OK&#x27;
+      when intent = &#x27;TIGHTEN&#x27; and tier = &#x27;TIER1_INDIVIDUAL&#x27;      then &#x27;CUT_PROPORTIONAL&#x27;
+      when intent = &#x27;TIGHTEN&#x27; and tier = &#x27;TIER2_LONGTAIL&#x27; and block_roas &lt; target_roas
+                                                                 then &#x27;CUT_LONGTAIL_BLOCK&#x27;
+      when intent = &#x27;TIGHTEN&#x27; and tier = &#x27;TIER2_LONGTAIL&#x27;        then &#x27;HOLD_LONGTAIL_OK&#x27;
+      when intent = &#x27;EXPAND&#x27;  and roas_pct &gt; roas_high_threshold
+           and tier = &#x27;TIER1_INDIVIDUAL&#x27; and keyword_roas &gt; target_roas
+                                                                 then &#x27;RAISE_PROPORTIONAL&#x27;
+      when intent = &#x27;EXPAND&#x27;                                     then &#x27;HOLD_BID&#x27;   -- EXPAND adds kws
       else &#x27;HOLD&#x27;
     end as tag
   from existing_keyword_output
 ),
 
 -- ============================================================
--- BRANCH B — NEW KEYWORDS (EXPAND additions)
+-- BRANCH B — NEW KEYWORDS (added when BU% &lt; 80%, any intent)
 -- ============================================================
-campaign_avg_bid as (
-  select offer_code, country, round(avg(current_bid), 4) as avg_bid
-  from campaign_structure
-  group by offer_code, country
+-- Candidate pool = top N organic keywords for the offer_code,
+-- ranked over product_performance_aggregated&#x27;s full 30-day window.
+-- Each cycle, add up to add_per_cycle of the pool that are not
+-- already in the campaign. Once all top-N are in, the pool is
+-- exhausted and nothing more is added - self-saturating, no cap needed.
+
+-- rank the full organic candidate set, then keep only the top-N pool
+organic_pool as (
+  select
+    offer_code,
+    country,
+    keyword,
+    row_number() over (
+      partition by offer_code, country
+      order by organic_orders desc, organic_views desc
+    ) as pool_rank
+  from organic_keywords
+  where organic_views &gt;= min_org_views                          -- noise floor
+    and safe_divide(organic_orders, organic_clicks) &gt;= min_cvr   -- quality floor
+  qualify pool_rank &lt;= organic_pool_n
 ),
 
-expand_candidates as (
+-- from the pool, keep only keywords not already in the campaign,
+-- for campaigns with budget headroom (BU% &lt; 80%)
+add_candidates as (
   select
-    ok.offer_code,
-    ok.country,
-    ok.keyword,
-    cab.avg_bid as starting_bid,
+    op.offer_code,
+    op.country,
+    op.keyword,
     row_number() over (
-      partition by ok.offer_code, ok.country
-      order by ok.organic_orders desc, ok.organic_views desc
-    ) as rn
-  from organic_keywords ok
-  join campaign_intent ci   using (offer_code, country)
-  join campaign_avg_bid cab using (offer_code, country)
-  -- not already in the campaign
+      partition by op.offer_code, op.country
+      order by op.pool_rank
+    ) as add_rank
+  from organic_pool op
+  join campaign_intent ci using (offer_code, country)
   left join campaign_structure cs
-    on  cs.offer_code = ok.offer_code
-    and cs.country    = ok.country
-    and cs.keyword    = ok.keyword
-  where ci.intent = &#x27;EXPAND&#x27;                                  -- only EXPAND campaigns
-    and cs.keyword is null                                    -- genuine new keyword
-    and ok.organic_views &gt;= min_org_views                     -- noise floor
-    and safe_divide(ok.organic_orders, ok.organic_clicks) &gt;= min_cvr   -- quality floor
+    on  cs.offer_code = op.offer_code
+    and cs.country    = op.country
+    and cs.keyword    = op.keyword
+  where ci.bu_pct &lt; bu_threshold        -- budget headroom (TIGHTEN or EXPAND)
+    and cs.keyword is null              -- not already in the campaign
 ),
 
 branch_b as (
@@ -663,10 +746,10 @@ branch_b as (
     offer_code,
     country,
     keyword,
-    starting_bid as bid,
-    &#x27;ADD_EXPAND&#x27; as tag
-  from expand_candidates
-  where rn &lt;= expand_top_n
+    add_start_bid as bid,
+    &#x27;ADD_KEYWORD&#x27; as tag
+  from add_candidates
+  where add_rank &lt;= add_per_cycle       -- add up to N this cycle
 )
 
 -- ============================================================
@@ -676,7 +759,7 @@ select offer_code, country, keyword, bid, tag from branch_a
 union all
 select offer_code, country, keyword, bid, tag from branch_b
 order by offer_code, country,
-         case when tag = &#x27;ADD_EXPAND&#x27; then 2 else 1 end,   -- existing kws first, added kws after
+         case when tag = &#x27;ADD_KEYWORD&#x27; then 2 else 1 end,   -- existing kws first, added kws after
          keyword;
 </pre>
   </div>
